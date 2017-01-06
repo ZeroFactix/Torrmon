@@ -2,20 +2,43 @@
 using System.Linq;
 using System.IO;
 using System.Diagnostics;
+using System.Configuration;
+
 
 namespace Filemon
 {
     class Program
     {
-
+        #region Declare Variables
         static string sSource = "Torrmon";
         static string sLog = "Application";
         static int pCount = 0;
-        public static string exLocation = @"C:\media\Ready";
-        public static string exTempLocation = @"C:\media\Temp";
+        public static string exLocation;
+        public static string exTempLocation;
+        public static string [] Ignoredirs;
+        public static string[] IgnoreFiles;
+        #endregion
+
 
         static void Main(string[] args)
         {
+            var reader = new AppSettingsReader();
+
+            exTempLocation = reader.GetValue("TempLocation", typeof(string)).ToString();
+            exLocation = reader.GetValue("ReadyLocation", typeof(string)).ToString();
+            string Ignoredirsstring = reader.GetValue("IgnoreDirs", typeof(string)).ToString();
+            Ignoredirs = Ignoredirsstring.Split(',');
+            string IgnoreFilesString = reader.GetValue("IgnoreFiles", typeof(string)).ToString();
+            IgnoreFiles = IgnoreFilesString.Split(',');
+
+            if (!Directory.Exists(exTempLocation))
+            {
+                Directory.CreateDirectory(exTempLocation);
+            }
+            if (!Directory.Exists(exLocation))
+            {
+                Directory.CreateDirectory(exLocation);
+            }
             pCount = 0;
             //Create Event log if needed
             if (!EventLog.SourceExists(sSource))
@@ -55,16 +78,17 @@ namespace Filemon
         {
             EventLog.WriteEntry(sSource, sMessage, EventLogEntryType.Error, 4);
         }
+       
+
 
         public static void ProcessFolder(String targetdir)
         {
             ProcessFiles(targetdir);
 
-
             string[] subDirectoryEntries = Directory.GetDirectories(targetdir);
             foreach (string subDir in subDirectoryEntries)
             {
-                if (!subDir.Contains("Sample") || !subDir.Contains("Subs"))
+                if (!Ignoredirs.Any(s => subDir.Contains(s)))
                 {
                     ProcessFolder(subDir);
                 }
@@ -92,7 +116,8 @@ namespace Filemon
                         startInfo.UseShellExecute = false;
                         startInfo.FileName = @"C:\Program Files\7-Zip\7z.exe";
                         startInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                        startInfo.Arguments = "e " + directory + @"\" + wfile + " -y -o" + exLocation;
+                        startInfo.Arguments = "e " + '"' + directory  + @"\" + wfile + '"' + " -y -o" + exTempLocation;
+                        WriteEventinfo("Running: " + startInfo.Arguments.ToString());
                         try
                         {
                             // Start the process with the info we specified.
@@ -119,7 +144,7 @@ namespace Filemon
                 else if (fExt == ".jpg" || fExt == ".mkv" || fExt == ".avi" || fExt == ".mp4")
                 {
                     string wFile = Path.GetFileName(file).ToString().ToLower();
-                    if (!wFile.Contains("sample"))
+                    if (!IgnoreFiles.Any(s => wFile.Contains(s)))
                     {
                         pCount++;
 
@@ -143,28 +168,38 @@ namespace Filemon
                 String[] toConvert = Directory.GetFiles(exTempLocation);
                 foreach (string file in toConvert)
                 {
-                    string fName = Path.GetFileNameWithoutExtension(file);
-                    ProcessStartInfo startInfo = new ProcessStartInfo();
-                    startInfo.CreateNoWindow = false;
-                    startInfo.UseShellExecute = false;
-                    startInfo.FileName = @"C:\media\Scripts\HandBrakeCLI\HandBrakeCLI.exe";
-                    startInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                    startInfo.Arguments = "-i " + file + " -f av_mp4 -e x264 -E av_aac -o " + exLocation + @"\" + fName + ".mp4";
-                    try
+                    string fExt = Path.GetExtension(file);
+                    string fullName = Path.GetFileName(file);
+                    if (fExt == ".mp4")
                     {
-                        // Start the process with the info we specified.
-                        // Call WaitForExit and then the using-statement will close.
-                        using (Process exeProcess = Process.Start(startInfo))
-                        {
-                            WriteEventinfo("Processing: " + toConvert);
-                            exeProcess.WaitForExit();
-                        }
-                        WriteEventinfo("Finished Processing: " + toConvert);
+                        File.Move(file, exLocation + @"\" + fullName);
                     }
-                    catch (Exception e)
+                    else
                     {
+                        string fName = Path.GetFileNameWithoutExtension(file);
+                        ProcessStartInfo startInfo = new ProcessStartInfo();
+                        startInfo.CreateNoWindow = false;
+                        startInfo.UseShellExecute = false;
+                        startInfo.FileName = @"C:\media\Scripts\HandBrakeCLI\HandBrakeCLI.exe";
+                        startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                        startInfo.Arguments = "-i " + file + " -f av_mp4 -e x264 -E av_aac -o " + exLocation + @"\" + fName + ".mp4";
+                        try
+                        {
+                            // Start the process with the info we specified.
+                            //Call WaitForExit and then the using-statement will close.
+                            using (Process exeProcess = Process.Start(startInfo))
+                            {
+                                WriteEventinfo("Processing: " + toConvert);
+                                exeProcess.WaitForExit();
+                            }
+                            WriteEventinfo("Finished Processing: " + toConvert);
+                            File.Delete(file);
+                        }
+                        catch (Exception e)
+                        {
 
-                        WriteEventerr("Error: " + e.Message.ToString());
+                            WriteEventerr("Error: " + e.Message.ToString());
+                        }
                     }
                 }
             }
